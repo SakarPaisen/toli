@@ -1,0 +1,100 @@
+package main
+
+import (
+	"context"
+	"errors"
+	"flag"
+	"fmt"
+	"os"
+	"os/exec"
+	"strings"
+	"time"
+
+	"github.com/arjunvlama/toli/internal/connect"
+	"github.com/arjunvlama/toli/internal/hook"
+)
+
+// runConnect is `toli connect <harness> <MCP URL> [--scope project|user]`,
+// or with disconnect, `toli disconnect` (same arguments).
+func runConnect(args []string, disconnect bool) error {
+	cmd := "connect"
+	if disconnect {
+		cmd = "disconnect"
+	}
+	fs := flag.NewFlagSet(cmd, flag.ContinueOnError)
+	scope := fs.String("scope", connect.Project, "project (sessions started in this directory) or user (all sessions)")
+	if len(args) < 2 {
+		return fmt.Errorf("usage: toli %s <%s> <MCP URL> [--scope project|user]", cmd, strings.Join(connect.Harnesses(), "|"))
+	}
+	harness, mcpURL := args[0], args[1]
+	if err := fs.Parse(args[2:]); err != nil {
+		return err
+	}
+
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+	agent, err := hook.Agent(ctx, mcpURL)
+	if err != nil && !disconnect {
+		return fmt.Errorf("check the MCP URL: %w", err)
+	}
+	if err != nil {
+		// The agent may be gone; its harness config should still go.
+		fmt.Fprintf(os.Stderr, "toli: check the MCP URL: %v (disconnecting anyway)\n", err)
+		agent = "?"
+	}
+	dir, err := os.Getwd()
+	if err != nil {
+		return err
+	}
+	home, err := os.UserHomeDir()
+	if err != nil {
+		return err
+	}
+	self, err := os.Executable()
+	if err != nil {
+		return err
+	}
+
+	register := func(h, session string) error {
+		_, err := hook.Register(ctx, mcpURL, h, session)
+		return err
+	}
+	unregister := func(session string) error {
+		return hook.Unregister(ctx, mcpURL, session)
+	}
+	opts := connect.Options{
+		MCPURL: mcpURL, Scope: *scope, Dir: dir, Home: home, Toli: self, Run: run, Register: register, Unregister: unregister,
+	}
+	do, verb := connect.Connect, "Connected %s to agent %q:\n"
+	if disconnect {
+		do, verb = connect.Disconnect, "Disconnected %s from agent %q:\n"
+	}
+	done, err := do(harness, opts)
+	if err != nil {
+		return err
+	}
+	fmt.Printf(verb, harness, agent)
+	for _, d := range done {
+		fmt.Println("  " + d.What)
+		if d.Manual != "" {
+			fmt.Println("    run: " + d.Manual)
+		}
+	}
+	return nil
+}
+
+// run runs a command in dir, quietly.
+func run(dir, name string, args ...string) error {
+	path, err := exec.LookPath(name)
+	if err != nil {
+		return err
+	}
+	cmd := exec.Command(path, args...)
+	cmd.Dir = dir
+	out, err := cmd.CombinedOutput()
+	var exitErr *exec.ExitError
+	if errors.As(err, &exitErr) && len(out) > 0 {
+		return fmt.Errorf("%w: %s", err, strings.TrimSpace(string(out)))
+	}
+	return err
+}

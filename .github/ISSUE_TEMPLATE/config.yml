@@ -1,0 +1,11 @@
+blank_issues_enabled: false
+contact_links:
+  - name: Question or idea
+    url: https://github.com/arjunvlama/toli/discussions
+    about: Ask or discuss in GitHub Discussions.
+  - name: Discord
+    url: https://discord.gg/DJ6p9DFXcB
+    about: Chat with other toli users.
+  - name: Security problem
+    url: https://github.com/arjunvlama/toli/security/advisories/new
+    about: Report it privately, not as an issue.

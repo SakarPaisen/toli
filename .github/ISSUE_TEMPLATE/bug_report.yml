@@ -1,0 +1,42 @@
+name: Bug report
+description: Something in toli doesn't work as it should.
+labels: [bug]
+body:
+  - type: textarea
+    id: what
+    attributes:
+      label: What happened
+      description: What you did, what you expected, and what happened instead.
+    validations:
+      required: true
+  - type: textarea
+    id: steps
+    attributes:
+      label: How to reproduce
+      description: The commands or steps, if you can.
+  - type: input
+    id: version
+    attributes:
+      label: toli version
+      description: The output of `toli version`.
+    validations:
+      required: true
+  - type: input
+    id: os
+    attributes:
+      label: OS
+      placeholder: macOS 15, Ubuntu 24.04, Windows 11
+    validations:
+      required: true
+  - type: input
+    id: harness
+    attributes:
+      label: Agent or harness
+      description: If it involves one.
+      placeholder: Claude Code 2.1, Codex 0.162, OpenCode, your own agent
+  - type: textarea
+    id: logs
+    attributes:
+      label: Daemon log
+      description: The relevant part of the daemon's log. Check it doesn't contain tokens before pasting.
+      render: text

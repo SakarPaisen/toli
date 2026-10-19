@@ -1,0 +1,49 @@
+version: 2
+
+project_name: toli
+
+builds:
+  - main: ./cmd/toli
+    binary: toli
+    env:
+      - CGO_ENABLED=0
+    goos: [darwin, linux, windows]
+    goarch: [amd64, arm64]
+    flags: [-trimpath]
+    ldflags: [-s -w]
+    mod_timestamp: "{{ .CommitTimestamp }}"
+
+archives:
+  # No version in the name, so the latest release is always at
+  # releases/latest/download/toli_<os>_<arch>.tar.gz (install.sh uses it).
+  - name_template: "{{ .ProjectName }}_{{ .Os }}_{{ .Arch }}"
+    formats: [tar.gz]
+    format_overrides:
+      - goos: windows
+        formats: [zip]
+    files: [LICENSE, README.md]
+
+checksum:
+  name_template: checksums.txt
+
+changelog:
+  sort: asc
+
+homebrew_casks:
+  - name: toli
+    binaries: [toli]
+    homepage: https://github.com/arjunvlama/toli
+    description: The telephone for AI agents
+    repository:
+      owner: arjunvlama
+      name: homebrew-tap
+      token: "{{ .Env.HOMEBREW_TAP_TOKEN }}"
+    directory: Casks
+    hooks:
+      post:
+        # The binary isn't signed by Apple: without this, macOS refuses to
+        # run it.
+        install: |
+          if OS.mac?
+            system_command "/usr/bin/xattr", args: ["-dr", "com.apple.quarantine", "#{staged_path}/toli"]
+          end

@@ -1,0 +1,94 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  test:
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, windows-latest]
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+      - uses: actions/setup-go@40f1582b2485089dde7abd97c1529aa768e1baff # v5.6.0
+        with:
+          go-version-file: go.mod
+      - run: go vet ./...
+      - run: go test ./...
+
+  # toli daemon install as a systemd user unit: install, crash restart,
+  # uninstall. CI runners have no login session, so the user's systemd is
+  # started with linger.
+  service-linux:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+      - uses: actions/setup-go@40f1582b2485089dde7abd97c1529aa768e1baff # v5.6.0
+        with:
+          go-version-file: go.mod
+      - run: go build -o "$HOME/toli" ./cmd/toli
+      - name: Start the user's systemd
+        run: |
+          sudo loginctl enable-linger "$USER"
+          echo "XDG_RUNTIME_DIR=/run/user/$(id -u)" >> "$GITHUB_ENV"
+          echo "DBUS_SESSION_BUS_ADDRESS=unix:path=/run/user/$(id -u)/bus" >> "$GITHUB_ENV"
+          for i in $(seq 1 30); do [ -S "/run/user/$(id -u)/bus" ] && exit 0; sleep 1; done
+          echo "no user bus"; exit 1
+      - name: Install, then the daemon runs
+        run: |
+          "$HOME/toli" daemon install
+          for i in $(seq 1 15); do "$HOME/toli" daemon status | grep -q "running: yes" && break; sleep 1; done
+          "$HOME/toli" daemon status
+          "$HOME/toli" daemon status | grep -q "running: yes"
+      - name: It restarts after a crash
+        run: |
+          pid=$(systemctl --user show -p MainPID --value toli)
+          kill -9 "$pid"
+          for i in $(seq 1 30); do
+            now=$(systemctl --user show -p MainPID --value toli)
+            [ "$now" != 0 ] && [ "$now" != "$pid" ] && "$HOME/toli" daemon status | grep -q "running: yes" && exit 0
+            sleep 1
+          done
+          echo "not restarted"; exit 1
+      - name: Logs
+        run: journalctl --user -u toli --no-pager | tail -20
+      - name: Uninstall
+        run: |
+          "$HOME/toli" daemon uninstall
+          "$HOME/toli" daemon status | grep -q "installed: no"
+
+  # toli daemon install as a Task Scheduler task. A runner has no logon to
+  # trigger it, so this checks install, a manual start, the log file, and
+  # uninstall.
+  service-windows:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+      - uses: actions/setup-go@40f1582b2485089dde7abd97c1529aa768e1baff # v5.6.0
+        with:
+          go-version-file: go.mod
+      - run: go build -o "$env:USERPROFILE\toli.exe" ./cmd/toli
+      - name: Install, then the daemon runs
+        run: |
+          & "$env:USERPROFILE\toli.exe" daemon install
+          if ($LASTEXITCODE -ne 0) { exit 1 }
+          foreach ($i in 1..20) {
+            if ((& "$env:USERPROFILE\toli.exe" daemon status) -match "running: yes") { break }
+            Start-Sleep 1
+          }
+          & "$env:USERPROFILE\toli.exe" daemon status
+          if (-not ((& "$env:USERPROFILE\toli.exe" daemon status) -match "running: yes")) { exit 1 }
+      - name: Logs
+        run: Get-Content "$env:LOCALAPPDATA\toli\daemon.log"
+      - name: Uninstall
+        run: |
+          & "$env:USERPROFILE\toli.exe" daemon uninstall
+          if ($LASTEXITCODE -ne 0) { exit 1 }
+          if (-not ((& "$env:USERPROFILE\toli.exe" daemon status) -match "installed: no")) { exit 1 }
