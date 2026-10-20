@@ -10,14 +10,16 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 	"text/tabwriter"
 
 	"github.com/arjunvlama/toli/internal/api"
+	"github.com/arjunvlama/toli/internal/connect"
 )
 
 const agentUsage = `usage:
-  toli agent add AGENT [--description TEXT] [--skills FILE]
+  toli agent add AGENT [--description TEXT] [--skills FILE] [--connect HARNESS [--scope project|user]]
   toli agent edit AGENT [--description TEXT] [--skills FILE]
   toli agent new-token AGENT
   toli agent notify AGENT --command PATH | --webhook URL | --none
@@ -31,6 +33,10 @@ func runAgent(args []string) error {
 	if len(args) < 1 {
 		return errors.New(agentUsage)
 	}
+	if isHelp(args) {
+		fmt.Println(agentUsage)
+		return nil
+	}
 	ctx := context.Background()
 	cmd, args := args[0], args[1:]
 	switch {
@@ -38,6 +44,11 @@ func runAgent(args []string) error {
 		fs := flag.NewFlagSet("agent "+cmd, flag.ContinueOnError)
 		desc := fs.String("description", "", "what the agent works on; peers see it")
 		skillsFile := fs.String("skills", "", "a JSON file with the agent's skills: [{\"name\": ..., \"description\": ..., \"tags\": [...], \"examples\": [...]}]")
+		var harness, scope *string
+		if cmd == "add" {
+			harness = fs.String("connect", "", "also connect this harness to the agent, as `toli connect` does")
+			scope = fs.String("scope", connect.Project, "with --connect: project (sessions started in this directory) or user (all sessions)")
+		}
 		if err := fs.Parse(args[1:]); err != nil {
 			return err
 		}
@@ -48,6 +59,15 @@ func runAgent(args []string) error {
 			var err error
 			if skills, err = readSkills(*skillsFile); err != nil {
 				return err
+			}
+		}
+		if harness != nil && *harness != "" {
+			// Check now, before the agent exists.
+			if !slices.Contains(connect.Harnesses(), *harness) {
+				return fmt.Errorf("unknown harness %q (want one of: %s)", *harness, strings.Join(connect.Harnesses(), ", "))
+			}
+			if *scope != connect.Project && *scope != connect.User {
+				return fmt.Errorf("unknown scope %q (want %s or %s)", *scope, connect.Project, connect.User)
 			}
 		}
 		c, err := adminClient()
@@ -70,19 +90,26 @@ func runAgent(args []string) error {
 			if err := c.UpdateAgent(ctx, name, api.UpdateAgentRequest{Description: *desc, Skills: skills}); err != nil {
 				return err
 			}
-			ok("Updated %s.", name)
+			ok("Updated agent '%s'.", name)
 			return nil
 		}
 		added, err := c.AddAgent(ctx, api.AddAgentRequest{Name: name, Description: *desc, Skills: skills})
 		if err != nil {
 			return err
 		}
-		ok("Added %s.", added.Name)
-		fmt.Printf("mcp_url   http://%s/mcp/%s\n", mcpAddr(), added.Token)
+		ok("Added agent '%s'.", added.Name)
 		if a, err := findAgent(ctx, c, added.Name); err == nil && a.ShareURL != "" {
 			fmt.Printf("card_url  %s\n", a.ShareURL)
 		}
-		fmt.Println("Copy the MCP URL now: you'll need it to connect the agent, and you won't be able to see it again.")
+		if *harness == "" {
+			fmt.Printf("Next: in the folder where you start it, run `toli connect <harness> %s`.\n", added.Name)
+			return nil
+		}
+		mcpURL := "http://" + mcpAddr() + "/mcp/" + added.Token
+		if err := doConnect(ctx, *harness, added.Name, mcpURL, *scope, false, false); err != nil {
+			return failed(fmt.Sprintf("once that's fixed, run `toli connect %s %s` here.", *harness, added.Name),
+				"Couldn't connect %s: %s", harnessName(*harness), strings.TrimSuffix(err.Error(), "."))
+		}
 		return nil
 	case cmd == "new-token" && len(args) == 1:
 		c, err := adminClient()
@@ -93,10 +120,10 @@ func runAgent(args []string) error {
 		if err != nil {
 			return err
 		}
-		ok("Made a new MCP URL for %s. The old one no longer works.", args[0])
+		ok("Made a new MCP URL for agent '%s'. The old one no longer works.", args[0])
 		fmt.Printf("mcp_url   http://%s/mcp/%s\n", mcpAddr(), rotated.Token)
 		fmt.Println("Copy it now: you won't be able to see it again.")
-		fmt.Println("Next: run toli connect again with it.")
+		fmt.Println("Next: anything using the old URL needs this one, e.g. `toli connect <harness> --mcp-url <url>`.")
 		return nil
 	case (cmd == "disable" || cmd == "enable") && len(args) == 1:
 		c, err := adminClient()
@@ -110,7 +137,7 @@ func runAgent(args []string) error {
 		if err := do(ctx, args[0]); err != nil {
 			return err
 		}
-		ok("%sd %s.", strings.ToUpper(cmd[:1])+cmd[1:], args[0])
+		ok("%sd agent '%s'.", strings.ToUpper(cmd[:1])+cmd[1:], args[0])
 		return nil
 	case cmd == "remove" && len(args) >= 1:
 		yes, err := parseYes("agent remove", args[1:])
@@ -122,13 +149,13 @@ func runAgent(args []string) error {
 			return err
 		}
 		name := args[0]
-		if !confirm("Remove "+name+" with its peers, sessions, and tasks?", yes) {
+		if !confirm("Remove agent "+name+" with its peers, sessions, and tasks?", yes) {
 			return nil
 		}
 		if err := c.RemoveAgent(ctx, name); err != nil {
 			return err
 		}
-		ok("Removed %s.", name)
+		ok("Removed agent '%s'.", name)
 		return nil
 	case cmd == "notify" && len(args) >= 1:
 		fs := flag.NewFlagSet("agent notify", flag.ContinueOnError)
@@ -139,7 +166,7 @@ func runAgent(args []string) error {
 			return err
 		}
 		if fs.NFlag() != 1 {
-			return errors.New("agent notify: give one of --command, --webhook or --none")
+			return errors.New("`toli agent notify`: give one of `--command`, `--webhook` or `--none`")
 		}
 		if *command != "" {
 			abs, err := filepath.Abs(*command)
@@ -165,13 +192,13 @@ func runAgent(args []string) error {
 		same := notifyText(&api.NotifyInfo{Command: *command, Webhook: api.HostOnly(*webhook)}) == notifyText(before.Notify)
 		switch was := notifyText(before.Notify); {
 		case *none && before.Notify != nil:
-			ok("%s's notifications aren't pushed any more (they went to %s).", before.Name, was)
+			ok("Notifications for agent '%s' aren't pushed any more (they went to %s).", before.Name, was)
 		case *none:
-			ok("%s's notifications aren't pushed.", before.Name)
+			ok("Notifications for agent '%s' aren't pushed.", before.Name)
 		case before.Notify != nil && !same:
-			ok("%s's notifications now go to %s (replacing %s).", before.Name, after, was)
+			ok("Notifications for agent '%s' now go to %s (replacing %s).", before.Name, after, was)
 		default:
-			ok("%s's notifications now go to %s.", before.Name, after)
+			ok("Notifications for agent '%s' now go to %s.", before.Name, after)
 		}
 		if set.Secret != "" {
 			fmt.Printf("secret  %s\n", set.Secret)
@@ -224,7 +251,7 @@ func findAgent(ctx context.Context, c *api.Client, name string) (api.AgentInfo, 
 			return a, nil
 		}
 	}
-	return api.AgentInfo{}, fmt.Errorf("no agent %s", name)
+	return api.AgentInfo{}, fmt.Errorf("no agent '%s'", name)
 }
 
 // readSkills reads a JSON array of skills, the API's format:

@@ -16,6 +16,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"regexp"
 	"runtime"
 	"strings"
 	"testing"
@@ -386,6 +387,36 @@ func (d *daemon) cli(t *testing.T, args ...string) string {
 	return string(out)
 }
 
+// cliFails runs a toli command that should fail, and returns its output.
+func (d *daemon) cliFails(t *testing.T, args ...string) string {
+	t.Helper()
+	cmd := exec.Command(toli, args...)
+	cmd.Env = append(os.Environ(), "TOLI_HOME="+d.home, "TOLI_ADMIN_ADDR="+d.admin, "TOLI_MCP_ADDR="+d.mcp)
+	out, err := cmd.CombinedOutput()
+	if err == nil {
+		t.Fatalf("toli %s succeeded:\n%s", strings.Join(args, " "), out)
+	}
+	return string(out)
+}
+
+// waitConnected waits until toli peer list shows agent's peer as connected
+// and holding its token.
+func (d *daemon) waitConnected(t *testing.T, agent, peer string) {
+	t.Helper()
+	for i := 0; ; i++ {
+		out := d.cli(t, "peer", "list", agent)
+		for _, line := range strings.Split(out, "\n") {
+			if f := strings.Fields(line); len(f) >= 3 && f[0] == peer && f[1] == "true" && f[2] == "true" {
+				return
+			}
+		}
+		if i == 100 {
+			t.Fatalf("%s's peer %s isn't connected:\n%s", agent, peer, out)
+		}
+		time.Sleep(100 * time.Millisecond)
+	}
+}
+
 // field is the value on a "key  value" line of CLI output.
 func field(t *testing.T, out, key string) string {
 	t.Helper()
@@ -404,8 +435,8 @@ func TestCLI(t *testing.T) {
 	da, db := startDaemon(t), startDaemon(t)
 
 	out := da.cli(t, "agent", "add", "web", "--description", "Owns the web UI")
-	if url := field(t, out, "mcp_url"); !strings.HasPrefix(url, "http://"+da.mcp+"/mcp/") {
-		t.Errorf("mcp_url = %s", url)
+	if !strings.Contains(out, "Next: in the folder where you start it, run `toli connect <harness> web`.") {
+		t.Errorf("agent add:\n%s", out)
 	}
 	if url := field(t, out, "card_url"); url != da.cardURL("web") {
 		t.Errorf("card_url = %s, want %s", url, da.cardURL("web"))
@@ -417,21 +448,8 @@ func TestCLI(t *testing.T) {
 	tokenForBackend := field(t, da.cli(t, "peer", "add", "frontend", "backend", db.cardURL("backend")), "token")
 	tokenForFrontend := field(t, db.cli(t, "peer", "add", "backend", "frontend", da.cardURL("frontend"), "--token", tokenForBackend), "token")
 	da.cli(t, "peer", "token", "frontend", "backend", tokenForFrontend)
-	for _, side := range []struct {
-		d           *daemon
-		agent, peer string
-	}{{da, "frontend", "backend"}, {db, "backend", "frontend"}} {
-		for i := 0; ; i++ {
-			out := side.d.cli(t, "peer", "list", side.agent)
-			if f := strings.Fields(strings.Split(out, "\n")[1]); len(f) >= 3 && f[0] == side.peer && f[1] == "true" && f[2] == "true" {
-				break
-			}
-			if i == 100 {
-				t.Fatalf("%s's peer %s isn't connected:\n%s", side.agent, side.peer, out)
-			}
-			time.Sleep(100 * time.Millisecond)
-		}
-	}
+	da.waitConnected(t, "frontend", "backend")
+	db.waitConnected(t, "backend", "frontend")
 
 	// A task shows on both sides, by its short ID too, and can be canceled.
 	id := frontend.must("delegate", map[string]any{"peer": "backend", "message": "Add a /stats endpoint"})["task_id"].(string)
@@ -471,7 +489,7 @@ func TestCLI(t *testing.T) {
 		t.Fatal(err)
 	}
 	out = db.cli(t, "agent", "notify", "backend", "--webhook", "https://example.com/toli")
-	if !strings.Contains(out, "✓ backend's notifications now go to webhook https://example.com/toli.") || !strings.HasPrefix(field(t, out, "secret"), "toli_") {
+	if !strings.Contains(out, "✓ Notifications for agent 'backend' now go to webhook https://example.com/toli.") || !strings.HasPrefix(field(t, out, "secret"), "toli_") {
 		t.Errorf("notify --webhook:\n%s", out)
 	}
 	if out := db.cli(t, "agent", "notify", "backend", "--command", wake); !strings.Contains(out, "(replacing webhook https://example.com/…)") {
@@ -482,6 +500,125 @@ func TestCLI(t *testing.T) {
 	}
 	if out := db.cli(t, "agent", "notify", "backend", "--none"); !strings.Contains(out, "(they went to command "+wake+")") {
 		t.Errorf("notify --none:\n%s", out)
+	}
+}
+
+// TestInvite pairs agents with toli peer invite and accept: on two daemons,
+// then two agents on one daemon.
+func TestInvite(t *testing.T) {
+	da, db := startDaemon(t), startDaemon(t)
+	frontend, backend := addAgent(t, da, "frontend"), addAgent(t, db, "backend")
+
+	out := da.cli(t, "peer", "invite", "frontend", "backend")
+	inv := ""
+	for _, f := range strings.Fields(out) {
+		if strings.HasPrefix(f, "toli-invite:") {
+			inv = f
+		}
+	}
+	if !strings.Contains(out, "✓ Created an invite for peer 'backend'.") || !strings.Contains(out, "toli peer accept <agent> "+inv) || inv == "" {
+		t.Fatalf("peer invite:\n%s", out)
+	}
+	if out := db.cli(t, "peer", "accept", "backend", inv); !strings.Contains(out, "✓ Paired agent 'backend' with peer 'frontend'.") {
+		t.Errorf("peer accept: %s", out)
+	}
+	da.waitConnected(t, "frontend", "backend")
+	db.waitConnected(t, "backend", "frontend")
+
+	// Each side's token works: both can delegate.
+	frontend.must("delegate", map[string]any{"peer": "backend", "message": "Add a /stats endpoint"})
+	backend.must("delegate", map[string]any{"peer": "frontend", "message": "Show the stats"})
+	if out := db.cli(t, "task", "list", "backend", "--assigned"); !strings.Contains(out, "frontend") {
+		t.Errorf("backend's assigned tasks:\n%s", out)
+	}
+	if out := da.cli(t, "task", "list", "frontend", "--assigned"); !strings.Contains(out, "backend") {
+		t.Errorf("frontend's assigned tasks:\n%s", out)
+	}
+
+	// A used invite pairs no one else.
+	addAgent(t, db, "other")
+	if out := db.cliFails(t, "peer", "accept", "other", inv); !strings.Contains(out, "no such invite") {
+		t.Errorf("used invite: %s", out)
+	}
+
+	// Two agents on one daemon, with a name of the accepter's choosing.
+	addAgent(t, da, "docs")
+	out = da.cli(t, "peer", "invite", "frontend", "docs")
+	inv = out[strings.Index(out, "toli-invite:"):]
+	inv = inv[:strings.IndexAny(inv, " \n")]
+	if out := da.cli(t, "peer", "accept", "docs", inv, "--name", "ui"); !strings.Contains(out, "✓ Paired agent 'docs' with peer 'ui'.") {
+		t.Errorf("peer accept --name: %s", out)
+	}
+	da.waitConnected(t, "frontend", "docs")
+	da.waitConnected(t, "docs", "ui")
+}
+
+// TestConnectByName connects a harness by agent name: it gets a new MCP URL,
+// and the old one stops working.
+func TestConnectByName(t *testing.T) {
+	d := startDaemon(t)
+	old := addAgent(t, d, "web").token
+	dir := t.TempDir()
+	run := func(args ...string) string {
+		t.Helper()
+		cmd := exec.Command(toli, args...)
+		cmd.Dir = dir
+		cmd.Env = append(os.Environ(), "TOLI_HOME="+d.home, "TOLI_ADMIN_ADDR="+d.admin, "TOLI_MCP_ADDR="+d.mcp)
+		out, err := cmd.CombinedOutput()
+		if err != nil {
+			t.Fatalf("toli %s: %v\n%s", strings.Join(args, " "), err, out)
+		}
+		return string(out)
+	}
+
+	if out := run("connect", "codex", "web"); !strings.Contains(out, "✓ Connected Codex to agent 'web' in ") {
+		t.Fatalf("connect by name:\n%s", out)
+	}
+	config, err := os.ReadFile(filepath.Join(dir, ".codex", "config.toml"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	url := regexp.MustCompile(`url = "([^"]+)"`).FindStringSubmatch(string(config))
+	if url == nil || !strings.HasPrefix(url[1], "http://"+d.mcp+"/mcp/toli_") || strings.HasSuffix(url[1], old) {
+		t.Fatalf("config.toml:\n%s", config)
+	}
+	// The new URL works (connect checks it); the old one doesn't.
+	if out := run("connect", "codex", "--mcp-url", url[1]); !strings.Contains(out, "agent 'web'") {
+		t.Errorf("connect --mcp-url:\n%s", out)
+	}
+	if out := d.cliFails(t, "connect", "codex", "--mcp-url", "http://"+d.mcp+"/mcp/"+old); !strings.Contains(out, "check the MCP URL") {
+		t.Errorf("old URL: %s", out)
+	}
+
+	if out := run("disconnect", "codex"); !strings.Contains(out, "✓ Disconnected Codex in ") {
+		t.Errorf("disconnect:\n%s", out)
+	}
+	if out := d.cliFails(t, "connect", "codex", "nobody"); !strings.Contains(out, "no agent 'nobody'") {
+		t.Errorf("unknown agent: %s", out)
+	}
+
+	// Adding an agent can connect it too; an unknown harness adds nothing.
+	if out := d.cliFails(t, "agent", "add", "api", "--connect", "nope"); !strings.Contains(out, "unknown harness") {
+		t.Errorf("agent add --connect nope: %s", out)
+	}
+	out := run("agent", "add", "api", "--connect", "codex")
+	if !strings.Contains(out, "✓ Added agent 'api'.") || !strings.Contains(out, "✓ Connected Codex to agent 'api' in ") {
+		t.Errorf("agent add --connect:\n%s", out)
+	}
+	if config, _ := os.ReadFile(filepath.Join(dir, ".codex", "config.toml")); !strings.Contains(string(config), "/mcp/toli_") {
+		t.Errorf("config.toml after agent add --connect:\n%s", config)
+	}
+
+	// If connecting fails, the agent stays and the output says how to finish.
+	cmd := exec.Command(toli, "agent", "add", "claw", "--connect", "openclaw")
+	cmd.Dir = dir
+	cmd.Env = append(os.Environ(), "TOLI_HOME="+d.home, "TOLI_ADMIN_ADDR="+d.admin, "TOLI_MCP_ADDR="+d.mcp, "PATH="+t.TempDir())
+	out2, err := cmd.CombinedOutput()
+	if err == nil || !strings.Contains(string(out2), "✓ Added agent 'claw'.") ||
+		!strings.Contains(string(out2), "X Couldn't connect OpenClaw: openclaw isn't on your PATH") ||
+		!strings.Contains(string(out2), "Next: once that's fixed, run `toli connect openclaw claw` here.") ||
+		strings.Contains(string(out2), "toli:") {
+		t.Errorf("agent add --connect that fails: %v\n%s", err, out2)
 	}
 }
 
