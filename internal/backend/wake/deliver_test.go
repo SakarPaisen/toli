@@ -16,8 +16,7 @@ import (
 	"github.com/arjunvlama/toli/internal/store"
 )
 
-// fakeSession is a Claude Code inbox (see listenInbox): it records each line
-// written.
+// fakeSession is a Claude Code inbox that records each line written.
 func fakeSession(t *testing.T) (path string, lines <-chan map[string]any) {
 	t.Helper()
 	path, ln := listenInbox(t)

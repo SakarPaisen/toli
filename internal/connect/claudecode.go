@@ -25,9 +25,8 @@ func (claudeCode) files(o Options) (mcpScope, settings string) {
 
 var windowsPaths = runtime.GOOS == "windows"
 
-// mcpDirs is where to run claude mcp. Claude Code keys a local-scope server
-// by its working directory as text, and on Windows VS Code starts it in
-// c:\... but terminals in C:\..., so toli adds it under both.
+// mcpDirs is where to run claude mcp. Claude Code keys local servers by its
+// working directory as text, and VS Code starts it in c:\ but terminals in C:\.
 func (claudeCode) mcpDirs(o Options) []string {
 	if o.Scope == User || !windowsPaths {
 		return []string{o.Dir}

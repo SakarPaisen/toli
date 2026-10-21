@@ -12,8 +12,7 @@ import (
 	"github.com/Microsoft/go-winio"
 )
 
-// dialInbox connects to a Claude Code session's inbox: on Windows, a named
-// pipe.
+// dialInbox connects to a Claude Code session's inbox, a named pipe here.
 func dialInbox(ctx context.Context, path string) (net.Conn, error) {
 	if strings.HasPrefix(path, `\\.\pipe\`) {
 		conn, err := winio.DialPipeContext(ctx, path)

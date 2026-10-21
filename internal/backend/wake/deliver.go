@@ -211,9 +211,8 @@ func deliverCommand(ctx context.Context, name string, args ...string) error {
 	return nil
 }
 
-// deliverSocket writes a message to a Claude Code session's inbox (a Unix
-// socket, or a named pipe on Windows): newline-delimited JSON, an auth line
-// with the session's token, then the message.
+// deliverSocket writes to a Claude Code session's inbox: an auth line with
+// the session's token, then the message, as JSON lines.
 func deliverSocket(ctx context.Context, path, token, text string) error {
 	if path == "" {
 		return fmt.Errorf("%w: no socket registered", errGone)

@@ -9,8 +9,7 @@ import (
 	"testing"
 )
 
-// listenInbox listens on a Unix socket, as Claude Code's inbox is on macOS
-// and Linux.
+// listenInbox listens on a Unix socket, like Claude Code's inbox.
 func listenInbox(t *testing.T) (string, net.Listener) {
 	t.Helper()
 	dir, err := os.MkdirTemp("", "toli") // short: Unix socket paths are limited to ~100 bytes
