@@ -95,6 +95,7 @@ func TestSystemd(t *testing.T) {
 
 func TestSchtasks(t *testing.T) {
 	c, calls := config(t)
+	c.Env = map[string]string{"PATH": `C:\Program Files\nodejs;C:\Users\alice\AppData\Roaming\npm`, "TOLI_HOME": "x"}
 	s := schtasks{c}
 	task := s.task()
 	var parsed struct {
@@ -109,7 +110,8 @@ func TestSchtasks(t *testing.T) {
 	if err := xml.Unmarshal([]byte(strings.Replace(task, `encoding="UTF-16"`, "", 1)), &parsed); err != nil {
 		t.Fatalf("task XML: %v\n%s", err, task)
 	}
-	wantArgs := `daemon --public-url http://100.64.0.2:7422/a&b --log-file ` + windowsQuote(s.Logs())
+	wantArgs := `daemon --public-url http://100.64.0.2:7422/a&b --log-file ` + windowsQuote(s.Logs()) +
+		` --path "C:\Program Files\nodejs;C:\Users\alice\AppData\Roaming\npm"`
 	if parsed.Exec.Command != "/opt/my tools/toli" || parsed.Exec.Arguments != wantArgs || parsed.User != `PC\alice` {
 		t.Errorf("task = %+v", parsed)
 	}
