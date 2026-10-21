@@ -12,8 +12,8 @@ import (
 	"github.com/Microsoft/go-winio"
 )
 
-// dialInbox connects to a Claude Code session's inbox. On Windows Claude Code
-// gives a named pipe (\\.\pipe\...), which a Unix socket dial can't open.
+// dialInbox connects to a Claude Code session's inbox: on Windows, a named
+// pipe.
 func dialInbox(ctx context.Context, path string) (net.Conn, error) {
 	if strings.HasPrefix(path, `\\.\pipe\`) {
 		conn, err := winio.DialPipeContext(ctx, path)

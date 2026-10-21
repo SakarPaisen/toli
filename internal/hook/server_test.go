@@ -62,6 +62,13 @@ func TestSessionHooks(t *testing.T) {
 		t.Fatalf("registered session = %+v, %v", as, err)
 	}
 
+	// A session ID with characters a shell would act on is refused.
+	bad := start
+	bad.SessionID = `x" & calc & "`
+	if resp, _ := post(tok, "session-start", bad); resp.StatusCode != http.StatusBadRequest {
+		t.Errorf("unsafe session_id: %d, want 400", resp.StatusCode)
+	}
+
 	// With a task from a peer waiting, the context says so.
 	bob := a2atest.NewFakePeer(t)
 	peer, _, err := b.AddPeer(ctx, "backend", "bob", bob.URL, "")

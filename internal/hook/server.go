@@ -76,6 +76,11 @@ func Handler(b *backend.Backend) http.Handler {
 			writeError(w, http.StatusBadRequest, "harness and session_id are required")
 			return
 		}
+		// It may go on a command line (codex queue).
+		if strings.Trim(req.SessionID, "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789-_.:") != "" {
+			writeError(w, http.StatusBadRequest, "session_id may only have letters, digits, -, _, . and :")
+			return
+		}
 		pending, err := b.RegisterHarnessSession(r.Context(), agent, req.Harness, req.SessionID, req.Address)
 		if err != nil {
 			writeError(w, http.StatusInternalServerError, err.Error())

@@ -13,6 +13,7 @@ import (
 	"net/http"
 	"net/url"
 	"os/exec"
+	"runtime"
 	"strings"
 	"time"
 
@@ -69,6 +70,9 @@ func (s *Service) deliver(ctx context.Context, sess store.HarnessSession, text s
 	case "claude-code":
 		return deliverSocket(ctx, sess.Address["socket"], sess.Address["socket_token"], text)
 	case "codex":
+		if throughCmd {
+			text = cmdNote
+		}
 		err := deliverCommand(ctx, "codex", "queue", "--thread", sess.SessionID, "--message", text)
 		// What codex queue (0.162) says for a thread it doesn't have. A
 		// closed session's thread still takes notes (read when resumed).
@@ -80,6 +84,9 @@ func (s *Service) deliver(ctx context.Context, sess store.HarnessSession, text s
 		// A user message to the session through the Gateway, as its web chat
 		// sends (no channel needed; deliver: false keeps the reply off
 		// channels). It starts a turn and returns at once.
+		if throughCmd {
+			text = cmdNote
+		}
 		key := make([]byte, 16)
 		rand.Read(key)
 		params, err := json.Marshal(map[string]any{
@@ -96,6 +103,12 @@ func (s *Service) deliver(ctx context.Context, sess store.HarnessSession, text s
 		return nil
 	}
 }
+
+// throughCmd: on Windows codex and openclaw are .cmd shims run by cmd.exe,
+// which could run a peer's text as a command, so they get cmdNote.
+var throughCmd = runtime.GOOS == "windows"
+
+const cmdNote = "toli: there's new activity on your tasks. Check list_available_tasks and list_delegated_tasks."
 
 // pushTimeout bounds one push, so a stuck program or webhook can't hold up
 // the next.
@@ -199,9 +212,8 @@ func deliverCommand(ctx context.Context, name string, args ...string) error {
 }
 
 // deliverSocket writes a message to a Claude Code session's inbox (a Unix
-// socket, or a named pipe on Windows):
-// newline-delimited JSON, an auth line with the session's token, then the
-// message.
+// socket, or a named pipe on Windows): newline-delimited JSON, an auth line
+// with the session's token, then the message.
 func deliverSocket(ctx context.Context, path, token, text string) error {
 	if path == "" {
 		return fmt.Errorf("%w: no socket registered", errGone)

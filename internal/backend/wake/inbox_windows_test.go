@@ -9,7 +9,7 @@ import (
 	"github.com/Microsoft/go-winio"
 )
 
-// listenInbox listens where Claude Code's inbox is on Windows: a named pipe.
+// listenInbox listens on a named pipe, as Claude Code's inbox is on Windows.
 func listenInbox(t *testing.T) (string, net.Listener) {
 	t.Helper()
 	b := make([]byte, 8)
