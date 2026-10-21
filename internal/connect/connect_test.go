@@ -46,6 +46,8 @@ func readHooks(t *testing.T, path string) map[string]any {
 }
 
 func TestClaudeCodeProject(t *testing.T) {
+	defer func(v bool) { onWindows = v }(onWindows)
+	onWindows = false // the full-path form; TestWindowsHooks has Windows's
 	dir := t.TempDir()
 	settings := filepath.Join(dir, ".claude", "settings.local.json")
 	os.MkdirAll(filepath.Dir(settings), 0o755)
@@ -334,8 +336,8 @@ func TestPi(t *testing.T) {
 }
 
 func TestClaudeCodeMCPDirs(t *testing.T) {
-	defer func(v bool) { windowsPaths = v }(windowsPaths)
-	windowsPaths = true
+	defer func(v bool) { onWindows = v }(onWindows)
+	onWindows = true
 	for dir, want := range map[string][]string{
 		`C:\Users\z\proj`: {`C:\Users\z\proj`, `c:\Users\z\proj`},
 		`c:\Users\z\proj`: {`c:\Users\z\proj`, `C:\Users\z\proj`},
@@ -347,5 +349,26 @@ func TestClaudeCodeMCPDirs(t *testing.T) {
 	}
 	if got := (claudeCode{}).mcpDirs(Options{Scope: User, Dir: `C:\x`}); len(got) != 1 {
 		t.Errorf("user scope: %q, want one", got)
+	}
+}
+
+func TestWindowsHooks(t *testing.T) {
+	defer func(v bool, lp func(string) (string, error)) { onWindows, lookPath = v, lp }(onWindows, lookPath)
+	onWindows = true
+	o := Options{MCPURL: "http://127.0.0.1:7420/mcp/tok", Toli: `C:\Users\z\go\bin\toli.exe`}
+	if got := hookCommand(o, "codex", "session-start"); got != "toli hook codex session-start http://127.0.0.1:7420/mcp/tok" {
+		t.Errorf("hookCommand = %q", got)
+	}
+	if !isToliHook(hookCommand(o, "codex", "session-start")) {
+		t.Error("disconnect wouldn't recognize the hook")
+	}
+
+	lookPath = func(string) (string, error) { return `c:\users\z\go\bin\toli.exe`, nil }
+	if d := toliOnPath(o); d != nil {
+		t.Errorf("toli on PATH is this one: %+v", d)
+	}
+	lookPath = func(string) (string, error) { return `C:\other\toli.exe`, nil }
+	if d := toliOnPath(o); len(d) != 1 || !strings.Contains(d[0].What, `C:\Users\z\go\bin`) {
+		t.Errorf("another toli first on PATH: %+v", d)
 	}
 }

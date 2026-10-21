@@ -10,7 +10,9 @@ import (
 	"fmt"
 	"net/url"
 	"os"
+	"os/exec"
 	"path/filepath"
+	"runtime"
 	"slices"
 	"strings"
 )
@@ -318,6 +320,32 @@ func gitIgnore(o Options, path string) (bool, error) {
 		return false, err
 	}
 	return true, nil
+}
+
+// onWindows is a variable so tests can set it.
+var onWindows = runtime.GOOS == "windows"
+
+// hookCommand is what a harness's hook runs. On Windows it's a bare toli,
+// which every shell reads the same way; elsewhere the full path, since apps
+// started outside a terminal may not have toli on their PATH.
+func hookCommand(o Options, harness, event string) string {
+	if onWindows {
+		return "toli hook " + harness + " " + event + " " + o.MCPURL
+	}
+	return shellJoin([]string{o.Toli, "hook", harness, event, o.MCPURL})
+}
+
+var lookPath = exec.LookPath
+
+// toliOnPath warns, on Windows, when the hooks' bare toli isn't this one.
+func toliOnPath(o Options) []Done {
+	if !onWindows {
+		return nil
+	}
+	if found, err := lookPath("toli"); err == nil && strings.EqualFold(filepath.Clean(found), filepath.Clean(o.Toli)) {
+		return nil
+	}
+	return []Done{{What: fmt.Sprintf("The hooks run `toli`, but on your PATH that isn't %s. Add %s to your PATH and remove any other copy.", o.Toli, filepath.Dir(o.Toli))}}
 }
 
 // shellJoin quotes args for a shell command line.

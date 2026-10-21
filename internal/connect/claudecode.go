@@ -5,7 +5,6 @@ import (
 	"fmt"
 	"os/exec"
 	"path/filepath"
-	"runtime"
 	"strings"
 )
 
@@ -23,12 +22,10 @@ func (claudeCode) files(o Options) (mcpScope, settings string) {
 	return "local", filepath.Join(o.Dir, ".claude", "settings.local.json")
 }
 
-var windowsPaths = runtime.GOOS == "windows"
-
 // mcpDirs is where to run claude mcp. Claude Code keys local servers by its
 // working directory as text, and VS Code starts it in c:\ but terminals in C:\.
 func (claudeCode) mcpDirs(o Options) []string {
-	if o.Scope == User || !windowsPaths {
+	if o.Scope == User || !onWindows {
 		return []string{o.Dir}
 	}
 	d := o.Dir
@@ -63,8 +60,8 @@ func (c claudeCode) connect(o Options) ([]Done, error) {
 	}
 
 	hooks := map[string]string{
-		"SessionStart": shellJoin([]string{o.Toli, "hook", "claude-code", "session-start", o.MCPURL}),
-		"SessionEnd":   shellJoin([]string{o.Toli, "hook", "claude-code", "session-end", o.MCPURL}),
+		"SessionStart": hookCommand(o, "claude-code", "session-start"),
+		"SessionEnd":   hookCommand(o, "claude-code", "session-end"),
 	}
 	// toli's tools only talk to the daemon, so they run without asking:
 	// otherwise an unattended session stops at the first one.
@@ -82,6 +79,7 @@ func (c claudeCode) connect(o Options) ([]Done, error) {
 			done = append(done, Done{File: ".gitignore"})
 		}
 	}
+	done = append(done, toliOnPath(o)...)
 	return append(done, Done{Next: "start a Claude Code session, or restart a running one (`claude --continue`)."}), nil
 }
 
