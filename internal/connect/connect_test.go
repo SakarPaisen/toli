@@ -332,3 +332,20 @@ func TestPi(t *testing.T) {
 		t.Errorf("extension still there: %v", err)
 	}
 }
+
+func TestClaudeCodeMCPDirs(t *testing.T) {
+	defer func(v bool) { windowsPaths = v }(windowsPaths)
+	windowsPaths = true
+	for dir, want := range map[string][]string{
+		`C:\Users\z\proj`: {`C:\Users\z\proj`, `c:\Users\z\proj`},
+		`c:\Users\z\proj`: {`c:\Users\z\proj`, `C:\Users\z\proj`},
+		`\\server\share`:  {`\\server\share`},
+	} {
+		if got := (claudeCode{}).mcpDirs(Options{Scope: Project, Dir: dir}); !slices.Equal(got, want) {
+			t.Errorf("%s: %q, want %q", dir, got, want)
+		}
+	}
+	if got := (claudeCode{}).mcpDirs(Options{Scope: User, Dir: `C:\x`}); len(got) != 1 {
+		t.Errorf("user scope: %q, want one", got)
+	}
+}

@@ -5,6 +5,8 @@ import (
 	"fmt"
 	"os/exec"
 	"path/filepath"
+	"runtime"
+	"strings"
 )
 
 // claudeCode is Claude Code.
@@ -21,6 +23,26 @@ func (claudeCode) files(o Options) (mcpScope, settings string) {
 	return "local", filepath.Join(o.Dir, ".claude", "settings.local.json")
 }
 
+var windowsPaths = runtime.GOOS == "windows"
+
+// mcpDirs is where to run claude mcp. Claude Code keys a local-scope server
+// by its working directory as text, and on Windows VS Code starts it in
+// c:\... but terminals in C:\..., so toli adds it under both.
+func (claudeCode) mcpDirs(o Options) []string {
+	if o.Scope == User || !windowsPaths {
+		return []string{o.Dir}
+	}
+	d := o.Dir
+	if len(d) < 2 || d[1] != ':' {
+		return []string{d}
+	}
+	upper, lower := strings.ToUpper(d[:1])+d[1:], strings.ToLower(d[:1])+d[1:]
+	if d == upper {
+		return []string{d, lower}
+	}
+	return []string{d, upper}
+}
+
 // connect adds the MCP server with Claude Code's own CLI, and the
 // hooks to Claude Code's settings.
 func (c claudeCode) connect(o Options) ([]Done, error) {
@@ -28,14 +50,17 @@ func (c claudeCode) connect(o Options) ([]Done, error) {
 	mcpScope, settings := c.files(o)
 
 	add := []string{"mcp", "add", "--transport", "http", "--scope", mcpScope, "toli", o.MCPURL}
-	o.Run(o.Dir, "claude", "mcp", "remove", "--scope", mcpScope, "toli") // replace any earlier one; fails if there's none
-	switch err := o.Run(o.Dir, "claude", add...); {
-	case errors.Is(err, exec.ErrNotFound):
-		return nil, errors.New("claude isn't on your PATH: install Claude Code's CLI (or open a new terminal), then retry")
-	case err != nil:
-		return nil, fmt.Errorf("claude mcp add: %w", err)
-	default:
-		done = append(done, Done{File: "~/.claude.json"})
+	for i, dir := range c.mcpDirs(o) {
+		o.Run(dir, "claude", "mcp", "remove", "--scope", mcpScope, "toli") // replace any earlier one; fails if there's none
+		err := o.Run(dir, "claude", add...)
+		switch {
+		case errors.Is(err, exec.ErrNotFound):
+			return nil, errors.New("claude isn't on your PATH: install Claude Code's CLI (or open a new terminal), then retry")
+		case err != nil:
+			return nil, fmt.Errorf("claude mcp add: %w", err)
+		case i == 0:
+			done = append(done, Done{File: "~/.claude.json"})
+		}
 	}
 
 	hooks := map[string]string{
@@ -68,13 +93,17 @@ func (c claudeCode) disconnect(o Options) ([]Done, error) {
 	mcpScope, settings := c.files(o)
 
 	remove := []string{"mcp", "remove", "--scope", mcpScope, "toli"}
-	switch err := o.Run(o.Dir, "claude", remove...); {
+	dirs := c.mcpDirs(o)
+	switch err := o.Run(dirs[0], "claude", remove...); {
 	case errors.Is(err, exec.ErrNotFound):
 		done = append(done, Done{What: "claude isn't on your PATH, so toli couldn't remove its MCP server.", Manual: "claude " + shellJoin(remove)})
 	case err != nil:
 		done = append(done, Done{What: fmt.Sprintf("Couldn't remove the MCP server (%s scope): %v", mcpScope, err)})
 	default:
 		done = append(done, Done{File: "~/.claude.json"})
+	}
+	for _, dir := range dirs[1:] {
+		o.Run(dir, "claude", remove...) // fails if connect didn't add it there
 	}
 
 	if err := removeHooks(settings, []string{"mcp__toli"}); err != nil {
