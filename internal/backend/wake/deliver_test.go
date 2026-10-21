@@ -5,7 +5,6 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
-	"net"
 	"os"
 	"path/filepath"
 	"runtime"
@@ -17,19 +16,11 @@ import (
 	"github.com/arjunvlama/toli/internal/store"
 )
 
-// fakeSession is a Claude Code inbox socket: it records each line written.
+// fakeSession is a Claude Code inbox (see listenInbox): it records each line
+// written.
 func fakeSession(t *testing.T) (path string, lines <-chan map[string]any) {
 	t.Helper()
-	dir, err := os.MkdirTemp("", "toli") // short: Unix socket paths are limited to ~100 bytes
-	if err != nil {
-		t.Fatal(err)
-	}
-	t.Cleanup(func() { os.RemoveAll(dir) })
-	path = filepath.Join(dir, "inbox.sock")
-	ln, err := net.Listen("unix", path)
-	if err != nil {
-		t.Fatal(err)
-	}
+	path, ln := listenInbox(t)
 	t.Cleanup(func() { ln.Close() })
 	ch := make(chan map[string]any, 16)
 	go func() {

@@ -10,12 +10,10 @@ import (
 	"fmt"
 	"io"
 	"log/slog"
-	"net"
 	"net/http"
 	"net/url"
 	"os/exec"
 	"strings"
-	"syscall"
 	"time"
 
 	"github.com/arjunvlama/toli/internal/store"
@@ -200,19 +198,15 @@ func deliverCommand(ctx context.Context, name string, args ...string) error {
 	return nil
 }
 
-// deliverSocket writes a message to a Claude Code session's inbox socket:
+// deliverSocket writes a message to a Claude Code session's inbox (a Unix
+// socket, or a named pipe on Windows):
 // newline-delimited JSON, an auth line with the session's token, then the
 // message.
 func deliverSocket(ctx context.Context, path, token, text string) error {
 	if path == "" {
 		return fmt.Errorf("%w: no socket registered", errGone)
 	}
-	var d net.Dialer
-	conn, err := d.DialContext(ctx, "unix", path)
-	// Windows refuses a dead socket with WSAECONNREFUSED (10061), not ECONNREFUSED.
-	if errors.Is(err, syscall.ENOENT) || errors.Is(err, syscall.ECONNREFUSED) || errors.Is(err, syscall.Errno(10061)) {
-		return fmt.Errorf("%w: %w", errGone, err)
-	}
+	conn, err := dialInbox(ctx, path)
 	if err != nil {
 		return err
 	}
