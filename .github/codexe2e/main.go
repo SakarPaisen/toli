@@ -5,11 +5,10 @@
 package main
 
 import (
-	"bufio"
 	"context"
 	"encoding/json"
 	"fmt"
-	"io"
+	"net"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -17,6 +16,7 @@ import (
 	"time"
 
 	"github.com/modelcontextprotocol/go-sdk/mcp"
+	"golang.org/x/net/websocket"
 
 	"github.com/arjunvlama/toli/internal/api"
 )
@@ -89,9 +89,19 @@ func run() error {
 	if err != nil {
 		return err
 	}
+	var socketPath string
+	for _, line := range strings.Split(string(b), "\n") {
+		var st struct{ SocketPath string }
+		if json.Unmarshal([]byte(line), &st) == nil && st.SocketPath != "" {
+			socketPath = st.SocketPath
+		}
+	}
+	if socketPath == "" {
+		return fmt.Errorf("no socketPath in daemon start's output")
+	}
 
-	step("thread via codex app-server proxy")
-	p, err := startProxy()
+	step("thread via the app-server daemon's socket (WebSocket over a Unix socket)")
+	p, err := dialDaemon(socketPath)
 	if err != nil {
 		return err
 	}
@@ -171,43 +181,52 @@ func harness(ctx context.Context, c *api.Client) string {
 
 func redact(s, tok string) string { return strings.ReplaceAll(s, tok, "<token>") }
 
-// proxy speaks JSON-RPC lines to Codex's app-server daemon through
-// `codex app-server proxy`.
+// proxy speaks JSON-RPC to Codex's app-server daemon: WebSocket messages
+// over its Unix socket, as Codex's own client does.
 type proxy struct {
-	in    io.Writer
+	ws    *websocket.Conn
 	lines chan map[string]any
 	id    int
 }
 
-func startProxy() (*proxy, error) {
-	cmd := exec.Command("codex", "app-server", "proxy")
-	in, _ := cmd.StdinPipe()
-	outp, _ := cmd.StdoutPipe()
-	cmd.Stderr = os.Stderr
-	if err := cmd.Start(); err != nil {
+func dialDaemon(socketPath string) (*proxy, error) {
+	conn, err := net.Dial("unix", socketPath)
+	if err != nil {
 		return nil, err
 	}
-	p := &proxy{in: in, lines: make(chan map[string]any, 1000)}
+	cfg, err := websocket.NewConfig("ws://localhost/rpc", "http://localhost/")
+	if err != nil {
+		return nil, err
+	}
+	ws, err := websocket.NewClient(cfg, conn)
+	if err != nil {
+		return nil, fmt.Errorf("websocket handshake: %w", err)
+	}
+	ws.MaxPayloadBytes = 128 << 20
+	p := &proxy{ws: ws, lines: make(chan map[string]any, 1000)}
 	go func() {
-		sc := bufio.NewScanner(outp)
-		sc.Buffer(make([]byte, 1<<20), 1<<24)
-		for sc.Scan() {
+		for {
+			var msg string
+			if err := websocket.Message.Receive(ws, &msg); err != nil {
+				fmt.Println("  (socket closed:", err, ")")
+				close(p.lines)
+				return
+			}
 			var m map[string]any
-			if json.Unmarshal(sc.Bytes(), &m) == nil {
+			if json.Unmarshal([]byte(msg), &m) == nil {
 				if meth, _ := m["method"].(string); meth != "" && !strings.Contains(meth, "delta") {
 					fmt.Println("  <-", meth)
 				}
 				p.lines <- m
 			}
 		}
-		close(p.lines)
 	}()
 	return p, nil
 }
 
 func (p *proxy) send(m map[string]any) {
 	b, _ := json.Marshal(m)
-	p.in.Write(append(b, '\n'))
+	websocket.Message.Send(p.ws, string(b))
 }
 
 func (p *proxy) notify(method string, params any) {
