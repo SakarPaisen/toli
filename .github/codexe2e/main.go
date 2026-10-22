@@ -22,6 +22,11 @@ import (
 )
 
 func main() {
+	go func() {
+		time.Sleep(15 * time.Minute)
+		fmt.Println("FAIL: still running after 15 minutes")
+		os.Exit(1)
+	}()
 	if err := run(); err != nil {
 		fmt.Println("FAIL:", err)
 		os.Exit(1)
@@ -73,8 +78,14 @@ func run() error {
 	fmt.Println(redact(string(hooks), worker.Token))
 
 	step("codex app-server daemon start")
-	out, err = exec.Command("codex", "app-server", "daemon", "start").CombinedOutput()
-	fmt.Print(string(out))
+	// Output to a file: the daemon it leaves running would hold a pipe open.
+	logf, _ := os.CreateTemp("", "codex-daemon-*.txt")
+	start := exec.Command("codex", "app-server", "daemon", "start")
+	start.Stdout, start.Stderr = logf, logf
+	err = start.Run()
+	logf.Close()
+	b, _ := os.ReadFile(logf.Name())
+	fmt.Print(string(b))
 	if err != nil {
 		return err
 	}
