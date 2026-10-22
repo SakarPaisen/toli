@@ -37,10 +37,40 @@ jobs:
           for ($i = 0; $i -lt 30; $i++) { if ((toli daemon status) -match "running\s+yes") { break }; Start-Sleep 1 }
           toli daemon status
           $x = schtasks /Query /TN toli /XML; ($x -join "`n") -match "--path" | Out-String
-      - name: Wake test
+      - name: Wake test, as a normal (non-admin) user
         shell: pwsh
-        run: go run ./.github/codexe2e
+        env:
+          OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
+        run: |
+          toli daemon uninstall
+          $dir = "C:\e2e"
+          New-Item -ItemType Directory -Force $dir | Out-Null
+          icacls $dir /grant "Everyone:(OI)(CI)F" | Out-Null
+          Copy-Item "$HOME\bin\toli.exe" "$dir\toli.exe"
+          go build -o "$dir\driver.exe" ./.github/codexe2e
+          Set-Content "$dir\key" $env:OPENAI_API_KEY -NoNewline
+          $script = @"
+          `$ErrorActionPreference = 'Continue'
+          `$env:PATH = '$dir;' + '$($env:PATH)'
+          Get-Content '$dir\key' | codex login --with-api-key *> '$dir\login.txt'
+          Remove-Item '$dir\key'
+          Start-Process toli -ArgumentList 'daemon','--log-file','$dir\daemon.log' -WindowStyle Hidden
+          for (`$i = 0; `$i -lt 30; `$i++) { if ((toli daemon status) -match 'running\s+yes') { break }; Start-Sleep 1 }
+          & '$dir\driver.exe' *> '$dir\out.txt'
+          Set-Content '$dir\exit.txt' `$LASTEXITCODE
+          "@
+          Set-Content "$dir\run.ps1" $script
+          $pass = "T0li-" + [Guid]::NewGuid().ToString("N").Substring(0, 16) + "!"
+          net user tolitest $pass /add | Out-Null
+          $cred = New-Object System.Management.Automation.PSCredential("tolitest", (ConvertTo-SecureString $pass -AsPlainText -Force))
+          $p = Start-Process pwsh -Credential $cred -LoadUserProfile -ArgumentList "-NoProfile","-File","$dir\run.ps1" -Wait -PassThru -WorkingDirectory $dir
+          "runner exit: $($p.ExitCode)"
+          Get-Content "$dir\login.txt" -ErrorAction SilentlyContinue
+          Get-Content "$dir\out.txt" -ErrorAction SilentlyContinue
+          $code = Get-Content "$dir\exit.txt" -ErrorAction SilentlyContinue
+          "driver exit: $code"
+          if ($code -ne "0") { exit 1 }
       - name: toli daemon log
         if: always()
         shell: pwsh
-        run: Get-Content "$env:LOCALAPPDATA\toli\daemon.log" -Tail 60 -ErrorAction SilentlyContinue
+        run: Get-Content "C:\e2e\daemon.log" -Tail 80 -ErrorAction SilentlyContinue
