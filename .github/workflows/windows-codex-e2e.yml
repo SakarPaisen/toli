@@ -1,0 +1,46 @@
+name: Windows Codex wake (temporary)
+on:
+  push:
+    branches: [windows-codex-e2e]
+permissions:
+  contents: read
+jobs:
+  e2e:
+    runs-on: windows-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+      - name: Install Codex, build toli
+        shell: pwsh
+        run: |
+          npm install -g @openai/codex
+          codex --version
+          New-Item -ItemType Directory -Force "$HOME\bin" | Out-Null
+          go build -o "$HOME\bin\toli.exe" ./cmd/toli
+          "$HOME\bin" | Out-File -FilePath $env:GITHUB_PATH -Append
+      - name: Log Codex in
+        shell: pwsh
+        env:
+          OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
+        run: $env:OPENAI_API_KEY | codex login --with-api-key
+      - name: Install the toli daemon as a scheduled task
+        shell: pwsh
+        run: |
+          toli version
+          toli daemon install
+          for ($i = 0; $i -lt 30; $i++) { if ((toli daemon status) -match "running\s+yes") { break }; Start-Sleep 1 }
+          toli daemon status
+          $x = schtasks /Query /TN toli /XML; ($x -join "`n") -match "--path" | Out-String
+      - name: Wake test
+        shell: pwsh
+        run: go run ./.github/codexe2e
+      - name: toli daemon log
+        if: always()
+        shell: pwsh
+        run: Get-Content "$env:LOCALAPPDATA\toli\daemon.log" -Tail 60 -ErrorAction SilentlyContinue
