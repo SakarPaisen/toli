@@ -30,7 +30,7 @@ import (
 
 // daemonFlags are `toli daemon`'s flags.
 type daemonFlags struct {
-	mcpListen, adminListen, a2aListen, publicURL, logFile *string
+	mcpListen, adminListen, a2aListen, publicURL, logFile, path *string
 }
 
 func newDaemonFlags() (*flag.FlagSet, daemonFlags) {
@@ -42,6 +42,7 @@ func newDaemonFlags() (*flag.FlagSet, daemonFlags) {
 		publicURL: fs.String("public-url", os.Getenv("TOLI_PUBLIC_URL"),
 			"URL peers use to reach the A2A server (default http://<a2a-listen>)"),
 		logFile: fs.String("log-file", "", "append logs to this file instead of stderr"),
+		path:    fs.String("path", "", "the PATH to find programs such as codex on (toli daemon install sets it on Windows)"),
 	}
 }
 
@@ -58,6 +59,9 @@ func runDaemon(args []string) error {
 		return nil
 	} else if err != nil {
 		return err
+	}
+	if *f.path != "" {
+		os.Setenv("PATH", *f.path)
 	}
 	mcpListen, adminListen, a2aListen, publicURL := f.mcpListen, f.adminListen, f.a2aListen, f.publicURL
 	if *publicURL == "" && *a2aListen != "" {

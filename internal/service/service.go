@@ -19,7 +19,7 @@ const Name = "toli"
 type Config struct {
 	Exe     string            // absolute path to the toli binary
 	Args    []string          // its arguments: "daemon" and daemon flags
-	Env     map[string]string // environment for the daemon (macOS, Linux)
+	Env     map[string]string // environment for the daemon (Windows: only PATH)
 	Home    string            // the user's home directory
 	LogDir  string            // where the daemon's log goes (macOS, Windows)
 	UID     int               // the user's id (macOS)

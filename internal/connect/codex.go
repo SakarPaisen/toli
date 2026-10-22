@@ -41,8 +41,8 @@ func (c codex) connect(o Options) ([]Done, error) {
 	done = append(done, Done{File: config})
 
 	hooks := map[string]string{
-		"SessionStart": shellJoin([]string{o.Toli, "hook", "codex", "session-start", o.MCPURL}),
-		"SessionEnd":   shellJoin([]string{o.Toli, "hook", "codex", "session-end", o.MCPURL}),
+		"SessionStart": hookCommand(o, "codex", "session-start"),
+		"SessionEnd":   hookCommand(o, "codex", "session-end"),
 	}
 	if err := setHooks(hooksFile, hooks, nil); err != nil {
 		return nil, err
@@ -60,6 +60,7 @@ func (c codex) connect(o Options) ([]Done, error) {
 			}
 		}
 	}
+	done = append(done, toliOnPath(o)...)
 	return append(done,
 		Done{Next: "start Codex (or restart a running session with `codex resume --last`), and when it asks, trust the folder and toli's hooks."},
 	), nil

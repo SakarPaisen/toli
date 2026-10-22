@@ -30,8 +30,13 @@ func (s schtasks) task() string {
 		xml.EscapeText(&b, []byte(v))
 		return b.String()
 	}
+	// A task can't set environment variables, so the PATH goes as a flag.
+	extra := []string{"--log-file", s.Logs()}
+	if p := s.c.Env["PATH"]; p != "" {
+		extra = append(extra, "--path", p)
+	}
 	var args []string
-	for _, a := range append(s.c.Args, "--log-file", s.Logs()) {
+	for _, a := range append(s.c.Args, extra...) {
 		args = append(args, windowsQuote(a))
 	}
 	return `<?xml version="1.0" encoding="UTF-16"?>
