@@ -64,6 +64,7 @@ jobs:
           for (`$i = 0; `$i -lt 30; `$i++) { if ((toli daemon status) -match 'running\s+yes') { break }; Start-Sleep 1 }
           & '$dir\driver.exe' *> '$dir\out.txt'
           Set-Content '$dir\exit.txt' `$LASTEXITCODE
+          Get-Process toli,codex -ErrorAction SilentlyContinue | Stop-Process -Force
           "@
           Set-Content "$dir\run.ps1" $script
           $pass = "T0li-" + [Guid]::NewGuid().ToString("N").Substring(0, 16) + "!"
