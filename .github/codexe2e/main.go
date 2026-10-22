@@ -216,6 +216,10 @@ func dialDaemon(socketPath string) (*proxy, error) {
 			if json.Unmarshal([]byte(msg), &m) == nil {
 				if meth, _ := m["method"].(string); meth != "" && !strings.Contains(meth, "delta") {
 					fmt.Println("  <-", meth)
+					if meth == "error" || meth == "warning" || meth == "configWarning" || meth == "turn/completed" {
+						b, _ := json.Marshal(m["params"])
+						fmt.Println("     ", truncate(string(b)))
+					}
 				}
 				p.lines <- m
 			}
