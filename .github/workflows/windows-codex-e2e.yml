@@ -51,6 +51,12 @@ jobs:
           Set-Content "$dir\key" $env:OPENAI_API_KEY -NoNewline
           $script = @"
           `$ErrorActionPreference = 'Continue'
+          `$h = 'C:\Users\' + (whoami).Split('\')[1]
+          `$env:USERPROFILE = `$h; `$env:HOME = `$h; `$env:HOMEDRIVE = 'C:'; `$env:HOMEPATH = `$h.Substring(2)
+          `$env:APPDATA = "`$h\AppData\Roaming"; `$env:LOCALAPPDATA = "`$h\AppData\Local"
+          `$env:TEMP = "`$h\AppData\Local\Temp"; `$env:TMP = `$env:TEMP; `$env:USERNAME = (whoami).Split('\')[1]
+          New-Item -ItemType Directory -Force `$env:TEMP | Out-Null
+          "running as `$(whoami), home `$h" | Out-File '$dir\who.txt'
           `$env:PATH = '$dir;' + '$($env:PATH)'
           Get-Content '$dir\key' | codex login --with-api-key *> '$dir\login.txt'
           Remove-Item '$dir\key'
@@ -66,6 +72,7 @@ jobs:
           $cred = New-Object System.Management.Automation.PSCredential("tolitest", (ConvertTo-SecureString $pass -AsPlainText -Force))
           $p = Start-Process pwsh -Credential $cred -LoadUserProfile -ArgumentList "-NoProfile","-File","$dir\run.ps1" -Wait -PassThru -WorkingDirectory $dir
           "runner exit: $($p.ExitCode)"
+          Get-Content "$dir\who.txt" -ErrorAction SilentlyContinue
           Get-Content "$dir\login.txt" -ErrorAction SilentlyContinue
           Get-Content "$dir\out.txt" -ErrorAction SilentlyContinue
           $code = Get-Content "$dir\exit.txt" -ErrorAction SilentlyContinue
