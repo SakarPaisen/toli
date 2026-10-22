@@ -61,7 +61,8 @@ jobs:
           "@
           Set-Content "$dir\run.ps1" $script
           $pass = "T0li-" + [Guid]::NewGuid().ToString("N").Substring(0, 16) + "!"
-          net user tolitest $pass /add | Out-Null
+          net user tolitest $pass /add /Y
+          if ($LASTEXITCODE -ne 0) { throw "net user failed" }
           $cred = New-Object System.Management.Automation.PSCredential("tolitest", (ConvertTo-SecureString $pass -AsPlainText -Force))
           $p = Start-Process pwsh -Credential $cred -LoadUserProfile -ArgumentList "-NoProfile","-File","$dir\run.ps1" -Wait -PassThru -WorkingDirectory $dir
           "runner exit: $($p.ExitCode)"
